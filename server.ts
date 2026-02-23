@@ -1,8 +1,13 @@
+console.log("Starting server.ts...");
+
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
+import { SimulationEngine } from "./src/services/SimulationEngine";
+import { AutonomousEngine, TokenData } from "./src/services/AutonomousEngine";
+import { PumpScanner } from "./src/services/PumpScanner";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,25 +79,33 @@ try {
   };
 }
 
+const simulationEngine = new SimulationEngine(db);
+const autonomousEngine = new AutonomousEngine(db, simulationEngine);
+const pumpScanner = new PumpScanner(db, simulationEngine, autonomousEngine);
+
 async function startServer() {
+  console.log("NODE_ENV:", process.env.NODE_ENV);
   const app = express();
   const PORT = 3000;
 
-  // Logging middleware
+  app.use(express.json());
+
+  // DEBUG LOGGING
   app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    if (!req.url.startsWith('/@vite') && !req.url.startsWith('/src')) {
+      console.log(`[EXPRESS] ${req.method} ${req.url}`);
+    }
     next();
   });
 
-  app.use(express.json());
-
-  // Health check - No DB dependency
+  // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // API Routes
+  // API Routes - Direct mount for maximum reliability
   app.get("/api/stats", (req, res) => {
+    console.log("Handling /api/stats request");
     try {
       if (!db || typeof db.prepare !== 'function') {
         throw new Error("Database not initialized");
@@ -140,6 +153,19 @@ async function startServer() {
     }
   });
 
+  // API 404 handler
+  app.use("/api/*", (req, res) => {
+    res.status(404).json({ error: "API Route Not Found" });
+  });
+
+  // Logging middleware
+  app.use((req, res, next) => {
+    if (!req.url.startsWith('/@vite') && !req.url.startsWith('/src')) {
+      console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    }
+    next();
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     console.log("Starting Vite in middleware mode...");
@@ -159,102 +185,8 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
-    startScanner().catch(err => console.error("Scanner failed to start:", err));
+    pumpScanner.start().catch(err => console.error("PumpScanner failed to start:", err));
   });
-}
-
-import { SimulationEngine } from "./src/services/SimulationEngine";
-import { AutonomousEngine, TokenData } from "./src/services/AutonomousEngine";
-
-const simulationEngine = new SimulationEngine(db);
-const autonomousEngine = new AutonomousEngine(db, simulationEngine);
-
-async function startScanner() {
-  console.log("Starting Autonomous Token Scanner...");
-  
-  const scan = async () => {
-    try {
-      // 1. Fetch latest token profiles from DEX Screener
-      // We use the search API to find active Solana pairs
-      const response = await fetch("https://api.dexscreener.com/latest/dex/search?q=solana");
-      if (!response.ok) return;
-      
-      const data = await response.json();
-      const pairs = data.pairs || [];
-      
-      // Filter for Solana pairs using the simulation engine's logic
-      const filteredPairs = simulationEngine.filterTokens(pairs);
-      
-      for (const pair of filteredPairs) {
-        try {
-          const tokenData: TokenData = {
-            address: pair.baseToken.address,
-            symbol: pair.baseToken.symbol || 'UNKNOWN',
-            name: pair.baseToken.name || 'Unknown Token',
-            priceUsd: parseFloat(pair.priceUsd || '0'),
-            liquidityUsd: pair.liquidity?.usd || 0,
-            volume24h: pair.volume?.h24 || 0,
-            mintDisabled: Math.random() > 0.2, // Simulated security check
-            lpBurnt: Math.random() > 0.3,     // Simulated security check
-          };
-
-          // 3. Update opportunities table
-          const safetyScore = (tokenData.mintDisabled ? 50 : 0) + (tokenData.lpBurnt ? 50 : 0);
-          
-          db.prepare(`
-            INSERT OR REPLACE INTO opportunities (token_address, token_symbol, liquidity_usd, price_usd, is_safe, safety_score)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(
-            tokenData.address,
-            tokenData.symbol,
-            tokenData.liquidityUsd,
-            tokenData.priceUsd,
-            safetyScore >= 80 ? 1 : 0,
-            safetyScore
-          );
-
-          // 4. Autonomous Decision Making
-          await autonomousEngine.analyzeAndTrade(tokenData);
-
-        } catch (e) {
-          console.error(`Error processing token ${pair.baseToken.address}:`, e);
-        }
-      }
-    } catch (error) {
-      console.error("Scanner error:", error);
-    }
-  };
-
-  const updatePnL = async () => {
-    try {
-      const positions = db.prepare("SELECT * FROM positions WHERE status = 'OPEN'").all();
-      for (const pos of positions) {
-        const currentPrice = await simulationEngine.getCurrentPrice(pos.token_address);
-        if (currentPrice > 0) {
-          const pnl = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
-          db.prepare("UPDATE positions SET pnl_percent = ? WHERE id = ?").run(pnl, pos.id);
-          
-          // Auto-sell logic (Stop Loss / Take Profit)
-          const sl = parseFloat(process.env.STOP_LOSS_PCT || "15");
-          const tp = parseFloat(process.env.TAKE_PROFIT_PCT || "30");
-          
-          if (pnl <= -sl || pnl >= tp) {
-            await simulationEngine.executeVirtualSell(pos.token_address, pos.amount_token);
-          }
-        }
-      }
-    } catch (e) {
-      console.error("PnL Update error:", e);
-    }
-  };
-
-  // Initial scan and PnL update
-  await scan();
-  await updatePnL();
-
-  // Intervals
-  setInterval(scan, 60000); // Scan every minute
-  setInterval(updatePnL, 30000); // Update PnL every 30 seconds
 }
 
 // Seed some mock data if empty
@@ -263,4 +195,4 @@ if (tradeCount.count === 0) {
   db.prepare("INSERT INTO logs (message, level) VALUES (?, ?)").run("Agent started. Scanning for new tokens...", "INFO");
 }
 
-startServer();
+startServer().catch(err => console.error("Server failed to start:", err));

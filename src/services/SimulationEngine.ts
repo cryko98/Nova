@@ -16,7 +16,19 @@ export class SimulationEngine {
       const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`);
       const data = await response.json();
       const pair = data.pairs?.find((p: any) => p.chainId === 'solana');
-      return parseFloat(pair?.priceUsd || '0');
+      
+      if (pair?.priceUsd) {
+        return parseFloat(pair.priceUsd);
+      }
+
+      // Fallback to Pump.fun API if not on DexScreener yet
+      const pumpRes = await fetch(`https://frontend-api.pump.fun/coins/${tokenAddress}`);
+      if (pumpRes.ok) {
+        const coin = await pumpRes.json();
+        return (coin.usd_market_cap || 0) / 1000000000;
+      }
+
+      return 0;
     } catch (e) {
       console.error("Failed to fetch price:", e);
       return 0;
@@ -50,7 +62,7 @@ export class SimulationEngine {
       console.warn(`Could not determine price for ${tokenSymbol}, using placeholder.`);
     }
 
-    const finalPrice = priceUsd || 0.0001;
+    const finalPrice = priceUsd || 0.000000001;
     const amountToken = (amountSol * 150) / finalPrice; // Simplified SOL/USD conversion for demo
 
     this.db.transaction(() => {

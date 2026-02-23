@@ -55,6 +55,8 @@ export default function Dashboard() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('positions');
+  const [selectedToken, setSelectedToken] = useState<string | null>(null);
+  const [prevPositionsCount, setPrevPositionsCount] = useState(0);
 
   const fetchStats = async () => {
     try {
@@ -69,6 +71,7 @@ export default function Dashboard() {
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
         console.error("Expected JSON but received:", text.substring(0, 100));
+        setStats(prev => prev ? { ...prev, error: "Server returned HTML instead of JSON. Check backend logs." } : null);
         return;
       }
 
@@ -86,6 +89,17 @@ export default function Dashboard() {
     const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-select newest position
+  useEffect(() => {
+    const currentCount = stats?.activePositions?.length || 0;
+    if (currentCount > prevPositionsCount && stats?.activePositions?.[0]) {
+      setSelectedToken(stats.activePositions[0].token_address);
+    } else if (currentCount > 0 && !selectedToken) {
+      setSelectedToken(stats.activePositions[0].token_address);
+    }
+    setPrevPositionsCount(currentCount);
+  }, [stats?.activePositions, prevPositionsCount, selectedToken]);
 
   if (loading) {
     return (
@@ -178,7 +192,18 @@ export default function Dashboard() {
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {stats?.activePositions?.map((pos: Position) => (
-                        <tr key={pos.id} className="hover:bg-white/[0.02] transition-colors group">
+                        <tr 
+                          key={pos.id} 
+                          onClick={() => setSelectedToken(pos.token_address)}
+                          className={`cursor-pointer transition-all group relative ${
+                            selectedToken === pos.token_address 
+                              ? 'bg-emerald-500/5' 
+                              : 'hover:bg-white/[0.02]'
+                          }`}
+                        >
+                          {selectedToken === pos.token_address && (
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500" />
+                          )}
                           <td className="p-4">
                             <div className="flex items-center gap-3">
                               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${pos.is_simulated ? 'bg-amber-500/10 text-amber-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
@@ -190,12 +215,13 @@ export default function Dashboard() {
                                   {pos.is_simulated === 1 && (
                                     <span className="text-[8px] bg-amber-500/20 text-amber-500 px-1 rounded uppercase font-bold">Demo</span>
                                   )}
+                                  <span className="text-[8px] bg-purple-500/20 text-purple-400 px-1 rounded uppercase font-bold">Pump.fun</span>
                                 </div>
                                 <p className="text-[10px] opacity-30 truncate w-24">{pos.token_address}</p>
                               </div>
                             </div>
                           </td>
-                          <td className="p-4 text-sm opacity-80">${pos.entry_price.toFixed(6)}</td>
+                          <td className="p-4 text-sm opacity-80">${pos.entry_price.toFixed(9)}</td>
                           <td className="p-4 text-sm opacity-80">{pos.amount_token.toLocaleString()}</td>
                           <td className={`p-4 text-sm font-bold ${pos.pnl_percent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {pos.pnl_percent >= 0 ? '+' : ''}{pos.pnl_percent.toFixed(2)}%
@@ -206,9 +232,15 @@ export default function Dashboard() {
                                 <Activity className="w-3 h-3 animate-pulse" />
                                 Monitoring
                               </span>
-                              <button className="p-2 hover:bg-white/10 rounded transition-colors opacity-0 group-hover:opacity-100">
+                              <a 
+                                href={`https://pump.fun/${pos.token_address}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-2 hover:bg-white/10 rounded transition-colors opacity-0 group-hover:opacity-100"
+                              >
                                 <ExternalLink className="w-4 h-4" />
-                              </button>
+                              </a>
                             </div>
                           </td>
                         </tr>
@@ -253,11 +285,12 @@ export default function Dashboard() {
                               {trade.is_simulated === 1 && (
                                 <span className="text-[8px] border border-amber-500/30 text-amber-500 px-1 rounded uppercase font-bold">Simulated</span>
                               )}
+                              <span className="text-[8px] border border-purple-500/30 text-purple-400 px-1 rounded uppercase font-bold ml-1">Pump.fun</span>
                             </div>
                           </td>
                           <td className="p-4 text-sm font-bold">{trade.token_symbol}</td>
                           <td className="p-4 text-sm opacity-80">{trade.amount_sol} SOL</td>
-                          <td className="p-4 text-sm opacity-80">${trade.price_usd.toFixed(6)}</td>
+                          <td className="p-4 text-sm opacity-80">${trade.price_usd.toFixed(9)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -267,21 +300,42 @@ export default function Dashboard() {
             </AnimatePresence>
           </div>
 
-          {/* Chart Iframe Placeholder */}
+          {/* Chart Section */}
           <div className="bg-[#0D0D0E] border border-white/10 rounded-xl overflow-hidden h-[500px] relative">
-            {stats?.activePositions?.length > 0 ? (
+            {(selectedToken || stats?.activePositions?.length > 0) ? (
               <>
-                <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-black/60 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10">
-                  <TrendingUp className="w-4 h-4 text-emerald-500" />
-                  <span className="text-[11px] uppercase tracking-wider font-bold">
-                    Live Analysis: {stats.activePositions[0].token_symbol}/SOL
-                  </span>
-                </div>
-                <iframe 
-                  src={`https://dexscreener.com/solana/${stats.activePositions[0].token_address}?embed=1&theme=dark&trades=0&info=0`}
-                  className="w-full h-full border-0"
-                  title="DexScreener Chart"
-                />
+                {(() => {
+                  const currentPos = stats?.activePositions?.find((p: any) => p.token_address === selectedToken) || stats?.activePositions?.[0];
+                  const tokenAddr = selectedToken || stats?.activePositions?.[0]?.token_address;
+                  const tokenSymbol = currentPos?.token_symbol || 'TOKEN';
+                  
+                  return (
+                    <>
+                      <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-black/60 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10">
+                        <TrendingUp className="w-4 h-4 text-emerald-500" />
+                        <span className="text-[11px] uppercase tracking-wider font-bold">
+                          Live Analysis: {tokenSymbol}/SOL (Pump.fun)
+                        </span>
+                      </div>
+                      <iframe 
+                        src={`https://dexscreener.com/solana/${tokenAddr}?embed=1&theme=dark&trades=0&info=0&style=pump`}
+                        className="w-full h-full border-0"
+                        title="DexScreener Chart"
+                      />
+                      <div className="absolute bottom-4 right-4 z-10">
+                        <a 
+                          href={`https://pump.fun/${tokenAddr}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="bg-emerald-500 text-black px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-400 transition-colors flex items-center gap-2"
+                        >
+                          View on Pump.fun
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </>
+                  );
+                })()}
               </>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center space-y-4 opacity-30">
@@ -314,12 +368,12 @@ export default function Dashboard() {
                 <p className="text-lg font-bold text-emerald-400">+30%</p>
               </div>
               <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-                <p className="text-[9px] opacity-40 uppercase tracking-widest mb-1">Min Liquidity</p>
-                <p className="text-sm font-bold">$5,000</p>
+                <p className="text-[9px] opacity-40 uppercase tracking-widest mb-1">Detection</p>
+                <p className="text-sm font-bold">Pump.fun</p>
               </div>
               <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-                <p className="text-[9px] opacity-40 uppercase tracking-widest mb-1">Max Trade</p>
-                <p className="text-sm font-bold">0.1 SOL</p>
+                <p className="text-[9px] opacity-40 uppercase tracking-widest mb-1">Slippage</p>
+                <p className="text-sm font-bold">20%</p>
               </div>
             </div>
           </div>
@@ -335,7 +389,10 @@ export default function Dashboard() {
                 <div key={opp.id} className="bg-white/5 p-3 rounded-lg border border-white/5 hover:border-white/20 transition-all group">
                   <div className="flex justify-between items-start mb-2">
                     <div>
-                      <p className="text-sm font-bold">{opp.token_symbol}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold">{opp.token_symbol}</p>
+                        <span className="text-[8px] bg-purple-500/20 text-purple-400 px-1 rounded uppercase font-bold">Pump.fun</span>
+                      </div>
                       <p className="text-[9px] opacity-30 truncate w-32">{opp.token_address}</p>
                     </div>
                     <div className="text-right">
@@ -362,9 +419,14 @@ export default function Dashboard() {
                         </>
                       )}
                     </div>
-                    <button className="px-2 bg-white/5 hover:bg-white/10 text-white/40 hover:text-white rounded transition-colors">
+                    <a 
+                      href={`https://pump.fun/${opp.token_address}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2 bg-white/5 hover:bg-white/10 text-white/40 hover:text-white rounded transition-colors flex items-center"
+                    >
                       <ExternalLink className="w-3 h-3" />
-                    </button>
+                    </a>
                   </div>
                 </div>
               ))}

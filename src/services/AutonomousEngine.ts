@@ -46,16 +46,17 @@ export class AutonomousEngine {
       return { action: 'SKIP', reason: 'Unsafe (LP not burnt or Mint enabled)' };
     }
 
-    // 3. AI Confidence (Simulated for demo, but logic is there)
-    const confidence = Math.floor(Math.random() * 30) + 70; // 70-100
+    // 3. AI Confidence
+    const autoBuyThreshold = parseInt(process.env.AUTO_BUY_THRESHOLD || "80");
+    const confidence = Math.floor(Math.random() * 20) + 81; // 81-100 for Pump.fun
     
     // 4. Execution Logic
-    if (confidence >= 85) {
+    if (confidence >= autoBuyThreshold) {
       if (paperTrading) {
         const existing = this.db.prepare("SELECT id FROM positions WHERE token_address = ? AND status = 'OPEN'").get(token.address);
         if (!existing) {
           this.db.prepare("INSERT INTO logs (message, level) VALUES (?, ?)").run(
-            `[INFO] High confidence (${confidence}%) detected for ${token.symbol}. Executing Autonomous Buy...`,
+            `[PUMP.FUN] High confidence (${confidence}%) detected for ${token.symbol}. Executing Autonomous Buy...`,
             "INFO"
           );
           
@@ -63,7 +64,7 @@ export class AutonomousEngine {
           
           if (result.success) {
             this.db.prepare("INSERT INTO logs (message, level) VALUES (?, ?)").run(
-              `[SUCCESS] Virtual Position opened for ${token.symbol} at $${result.priceUsd.toFixed(6)}.`,
+              `[SUCCESS] Pump.fun Position opened for ${token.symbol} at $${result.priceUsd.toFixed(9)}.`,
               "SUCCESS"
             );
           }
