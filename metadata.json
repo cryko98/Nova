@@ -1,0 +1,5 @@
+{
+  "name": "NovaTrader Solana Agent",
+  "description": "An autonomous AI trading agent for Solana meme coins with a real-time monitoring dashboard, Jupiter V6 integration, and safety filters.",
+  "requestFramePermissions": []
+}
