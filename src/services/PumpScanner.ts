@@ -17,10 +17,12 @@ export class PumpScanner {
   async start() {
     if (this.isScanning) return;
     this.isScanning = true;
-    console.log("Starting Pump.fun Autonomous Scanner...");
+    const intervalMs = parseInt(process.env.SCAN_INTERVAL_MS || "3000");
+    
+    console.log(`Starting Pump.fun High-Frequency Scanner (${intervalMs}ms)...`);
     
     this.db.prepare("INSERT INTO logs (message, level) VALUES (?, ?)").run(
-      "Pump.fun Scanner initialized. Monitoring bonding curves...",
+      `Pump.fun Scanner Active. Mode: ${process.env.DETECTION_MODE}. Interval: ${intervalMs}ms`,
       "INFO"
     );
 
@@ -28,42 +30,44 @@ export class PumpScanner {
     await this.scan();
     await this.updatePnL();
 
-    // Intervals
-    setInterval(() => this.scan(), 30000); // Scan every 30 seconds for Pump.fun
-    setInterval(() => this.updatePnL(), 15000); // Update PnL every 15 seconds
+    // High-frequency intervals
+    setInterval(() => this.scan(), intervalMs);
+    setInterval(() => this.updatePnL(), 10000); // PnL update can be slightly slower
   }
 
   private async scan() {
     try {
-      // Use Pump.fun API for latest coins
-      const response = await fetch("https://frontend-api.pump.fun/coins/latest?limit=20&offset=0&sort=created_timestamp&order=DESC&includeNsfw=false");
-      if (!response.ok) {
-        console.error("Pump.fun API error:", response.status);
-        return;
-      }
+      const minVolume = parseFloat(process.env.MIN_VOLUME_USD || "5000");
+      const maxAgeMinutes = parseInt(process.env.MAX_COIN_AGE_MINUTES || "60");
+      const now = Date.now();
+
+      const response = await fetch("https://frontend-api.pump.fun/coins/latest?limit=20&offset=0&includeNsfw=false");
+      if (!response.ok) return;
       
       const coins = await response.json();
       
       for (const coin of coins) {
         try {
-          // Pump.fun specific filters
-          // We look for tokens with some volume/activity
-          const volume = coin.usd_market_cap || 0; // Market cap as a proxy for early interest
-          
+          const ageMinutes = (now - (coin.created_timestamp || now)) / 60000;
+          const volume = coin.usd_market_cap || 0; // Using market cap as a proxy for volume/interest in early stages
+
+          // Filter: Created in last X minutes and has minimum "volume" (market cap)
+          if (ageMinutes > maxAgeMinutes || volume < minVolume) {
+            continue;
+          }
+
           const tokenData: TokenData = {
             address: coin.mint,
             symbol: coin.symbol || 'UNKNOWN',
             name: coin.name || 'Unknown Token',
-            priceUsd: coin.usd_market_cap / 1000000000, // Very rough estimate for early pricing
-            liquidityUsd: coin.usd_market_cap * 0.2, // Rough estimate of bonding curve liquidity
+            priceUsd: coin.usd_market_cap / 1000000000,
+            liquidityUsd: coin.usd_market_cap * 0.15, // Conservative liquidity estimate
             volume24h: volume,
-            mintDisabled: true, // Pump.fun tokens have mint disabled by default
-            lpBurnt: true,      // Pump.fun tokens have LP "burnt" (locked in curve)
+            mintDisabled: true,
+            lpBurnt: true,
           };
 
           // Update opportunities table
-          const safetyScore = 100; // Pump.fun tokens are technically "safe" from standard rugs
-          
           this.db.prepare(`
             INSERT OR REPLACE INTO opportunities (token_address, token_symbol, liquidity_usd, price_usd, is_safe, safety_score)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -73,7 +77,7 @@ export class PumpScanner {
             tokenData.liquidityUsd,
             tokenData.priceUsd,
             1,
-            safetyScore
+            100
           );
 
           // Autonomous Decision Making
@@ -94,11 +98,11 @@ export class PumpScanner {
       for (const pos of positions) {
         // For Pump.fun tokens, we might need a different price source if DexScreener hasn't indexed them yet
         // But DexScreener is usually fast.
-        const currentPrice = await this.simulationEngine.getCurrentPrice(pos.token_address);
+        const { priceUsd, marketCap } = await this.simulationEngine.getCurrentPrice(pos.token_address);
         
-        if (currentPrice > 0) {
-          const pnl = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
-          this.db.prepare("UPDATE positions SET pnl_percent = ? WHERE id = ?").run(pnl, pos.id);
+        if (priceUsd > 0) {
+          const pnl = ((priceUsd - pos.entry_price) / pos.entry_price) * 100;
+          this.db.prepare("UPDATE positions SET pnl_percent = ?, market_cap = ? WHERE id = ?").run(pnl, marketCap, pos.id);
           
           // Auto-sell logic
           const sl = parseFloat(process.env.STOP_LOSS_PCT || "15");

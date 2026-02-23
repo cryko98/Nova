@@ -11,27 +11,33 @@ export class SimulationEngine {
   /**
    * Fetch current price for a token pair from DexScreener
    */
-  async getCurrentPrice(tokenAddress: string): Promise<number> {
+  async getCurrentPrice(tokenAddress: string): Promise<{ priceUsd: number, marketCap: number }> {
     try {
       const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`);
       const data = await response.json();
       const pair = data.pairs?.find((p: any) => p.chainId === 'solana');
       
       if (pair?.priceUsd) {
-        return parseFloat(pair.priceUsd);
+        return { 
+          priceUsd: parseFloat(pair.priceUsd), 
+          marketCap: parseFloat(pair.fdv || pair.marketCap || '0') 
+        };
       }
 
       // Fallback to Pump.fun API if not on DexScreener yet
       const pumpRes = await fetch(`https://frontend-api.pump.fun/coins/${tokenAddress}`);
       if (pumpRes.ok) {
         const coin = await pumpRes.json();
-        return (coin.usd_market_cap || 0) / 1000000000;
+        return { 
+          priceUsd: (coin.usd_market_cap || 0) / 1000000000, 
+          marketCap: coin.usd_market_cap || 0 
+        };
       }
 
-      return 0;
+      return { priceUsd: 0, marketCap: 0 };
     } catch (e) {
       console.error("Failed to fetch price:", e);
-      return 0;
+      return { priceUsd: 0, marketCap: 0 };
     }
   }
 
@@ -57,7 +63,7 @@ export class SimulationEngine {
    * Execute a virtual buy
    */
   async executeVirtualBuy(tokenAddress: string, tokenSymbol: string, amountSol: number) {
-    const priceUsd = await this.getCurrentPrice(tokenAddress);
+    const { priceUsd, marketCap } = await this.getCurrentPrice(tokenAddress);
     if (priceUsd === 0) {
       console.warn(`Could not determine price for ${tokenSymbol}, using placeholder.`);
     }
@@ -77,9 +83,9 @@ export class SimulationEngine {
 
       // Create position
       this.db.prepare(`
-        INSERT INTO positions (token_address, token_symbol, entry_price, amount_token, status, is_simulated)
-        VALUES (?, ?, ?, ?, 'OPEN', 1)
-      `).run(tokenAddress, tokenSymbol, finalPrice, amountToken);
+        INSERT INTO positions (token_address, token_symbol, entry_price, amount_token, market_cap, status, is_simulated)
+        VALUES (?, ?, ?, ?, ?, 'OPEN', 1)
+      `).run(tokenAddress, tokenSymbol, finalPrice, amountToken, marketCap);
 
       this.db.prepare("INSERT INTO logs (message, level) VALUES (?, ?)").run(
         `[SIMULATION] Virtual Buy: ${amountSol} SOL of ${tokenSymbol} at $${finalPrice}`,
@@ -94,7 +100,7 @@ export class SimulationEngine {
    * Execute a virtual sell
    */
   async executeVirtualSell(tokenAddress: string, amountToken: number) {
-    const priceUsd = await this.getCurrentPrice(tokenAddress);
+    const { priceUsd } = await this.getCurrentPrice(tokenAddress);
     const position = this.db.prepare("SELECT * FROM positions WHERE token_address = ? AND status = 'OPEN'").get(tokenAddress);
     
     if (!position) return;

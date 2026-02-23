@@ -18,6 +18,7 @@ interface Position {
   token_symbol: string;
   entry_price: number;
   amount_token: number;
+  market_cap: number;
   status: string;
   pnl_percent: number;
   is_simulated: number;
@@ -86,7 +87,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchStats();
-    const interval = setInterval(fetchStats, 5000);
+    const interval = setInterval(fetchStats, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -185,7 +186,7 @@ export default function Dashboard() {
                       <tr className="border-b border-white/5 bg-white/[0.02]">
                         <th className="p-4 text-[10px] uppercase tracking-widest opacity-40 font-medium">Token</th>
                         <th className="p-4 text-[10px] uppercase tracking-widest opacity-40 font-medium">Entry Price</th>
-                        <th className="p-4 text-[10px] uppercase tracking-widest opacity-40 font-medium">Amount</th>
+                        <th className="p-4 text-[10px] uppercase tracking-widest opacity-40 font-medium">Market Cap</th>
                         <th className="p-4 text-[10px] uppercase tracking-widest opacity-40 font-medium">PnL %</th>
                         <th className="p-4 text-[10px] uppercase tracking-widest opacity-40 font-medium">Action</th>
                       </tr>
@@ -222,7 +223,11 @@ export default function Dashboard() {
                             </div>
                           </td>
                           <td className="p-4 text-sm opacity-80">${pos.entry_price.toFixed(9)}</td>
-                          <td className="p-4 text-sm opacity-80">{pos.amount_token.toLocaleString()}</td>
+                          <td className="p-4 text-sm opacity-80">
+                            ${pos.market_cap > 1000000 
+                              ? `${(pos.market_cap / 1000000).toFixed(2)}M` 
+                              : `${(pos.market_cap / 1000).toFixed(1)}K`}
+                          </td>
                           <td className={`p-4 text-sm font-bold ${pos.pnl_percent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {pos.pnl_percent >= 0 ? '+' : ''}{pos.pnl_percent.toFixed(2)}%
                           </td>

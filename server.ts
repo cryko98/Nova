@@ -35,6 +35,7 @@ try {
       token_symbol TEXT,
       entry_price REAL,
       amount_token REAL,
+      market_cap REAL DEFAULT 0,
       status TEXT DEFAULT 'OPEN',
       pnl_percent REAL DEFAULT 0,
       is_simulated INTEGER DEFAULT 0,
